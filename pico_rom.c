@@ -19,9 +19,13 @@ void setup_rom_contents();
 uint8_t rom_contents[32768] = {};
 uint16_t img_pos;
 uint16_t img_start;
-uint16_t img_end;
+uint8_t  img_idx;
 uint16_t last_address;
 uint16_t frame_counter = 0;
+uint8_t  rom_img;
+#define IMG_BASE 5000 // Pseudo ROM address of image data
+#define IMG_NUM  4    // Number encoded
+#define IMG_SIZE 672  // 64*84/8
 
 int main() {
     // Specify contents of emulated ROM.
@@ -35,11 +39,12 @@ int main() {
     // GPIO setup.
     setup_gpio();
 
-    img_pos = 5000;
-	img_start = 5000;
-	img_end = 5671;
+    img_pos = IMG_BASE-1;  // On power up there often seems to be a spurious read...
+	img_start = IMG_BASE;
+    img_idx = 0;
 	last_address = 0;
 	frame_counter = 0;
+    rom_img = rom_contents[img_start];
     
     // Continually check address lines and
     // put associated data on bus.
@@ -107,42 +112,38 @@ int get_requested_address() {
 
 void put_data_on_bus(int address) {
     // Special handing of image data.
-    if (address == 3840) {
-        gpio_put_masked(8355840, rom_contents[img_pos] << 15);
+    if (address == 0xF00)
+    {
+        gpio_put_masked(8355840, rom_img << 15);
+    }
+    else if ((last_address == 0xF00) && (address != 0xF00))
+    {
+        // On last read update image pointer and store for next time
+        img_pos++;
 
-		if (last_address != 3840) {
-			img_pos++;
-		}
+        // If a full frame has been drawn...
+        if (img_pos == img_start + IMG_SIZE) {
+            frame_counter++;
 
-		// If a full frame has been drawn...
-		if (img_pos == img_end+1) {
-			img_pos = img_start;
-
-			frame_counter++;
-
-			// Every X number of frames, show the next image.
-			if (frame_counter > 1000) {
-				frame_counter = 0;
-				img_start = img_start + 672;
-				img_end = img_end + 672;
-
-				// If all images have been shown, start over.
-				if (img_start > 7016) {
-					img_start = 5000;
-					img_end = 5671;
-				}
-			}
-		}
-		
-		last_address = address;
-        
-        return;
+            // Every X number of frames, show the next image.
+            if (frame_counter > 500) {
+                frame_counter = 0;
+                img_idx++;
+                if (img_idx >= IMG_NUM) img_idx = 0;
+                img_start = IMG_BASE + IMG_SIZE*img_idx;
+            }
+            img_pos = img_start;
+        }
+        rom_img = rom_contents[img_pos];
+    }
+    else
+    {
+        // gpio mask = 8355840; // i.e.: 11111111000000000000000
+        // Shift data 15 bits to put it in correct position to match data pin defintion.
+        gpio_put_masked(8355840, rom_contents[address] << 15);
     }
 
-    // gpio mask = 8355840; // i.e.: 11111111000000000000000
-    // Shift data 15 bits to put it in correct position to match data pin defintion.
-    gpio_put_masked(8355840, rom_contents[address] << 15);
-	last_address = address;
+    last_address = address;
 }
 
 void setup_rom_contents() {
